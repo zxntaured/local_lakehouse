@@ -1,0 +1,64 @@
+services:
+  lakekeeper-migrate:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: never
+    command: ["migrate"]
+    environment:
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:lakekeeper_local_password@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:lakekeeper_local_password@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_ENCRYPTION_KEY: local-demo-key-keep-for-this-project
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    mem_limit: 512m
+
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:latest-main
+    pull_policy: never
+    command: ["serve"]
+    environment:
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:lakekeeper_local_password@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:lakekeeper_local_password@postgres:5432/lakekeeper
+      LAKEKEEPER__PG_ENCRYPTION_KEY: local-demo-key-keep-for-this-project
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
+      RUST_LOG: info
+    ports:
+      - "127.0.0.1:8181:8181"
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      silo:
+        condition: service_healthy
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  trino:
+    image: trinodb/trino:483
+    pull_policy: never
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./trino/config.properties:/etc/trino/config.properties:ro
+      - ./trino/jvm.config:/etc/trino/jvm.config:ro
+      - ./trino/catalog:/etc/trino/catalog:ro
+      - ./sql:/sql:ro
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      silo:
+        condition: service_healthy
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
